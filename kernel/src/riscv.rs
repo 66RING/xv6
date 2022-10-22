@@ -1,3 +1,4 @@
+#![allow(unused)]
 // TODO learn bit_field crate
 use bit_field::BitField;
 use core::arch::asm;
@@ -264,3 +265,13 @@ pub fn vma() {
         asm!("sfence.vma zero, zero");
     }
 }
+
+#[inline(always)]
+pub fn w_stvec(x: usize) {
+    unsafe {
+        // the zero, zero means flush all TLB entries.
+        asm!("csrw stvec, {0}",
+             in(reg) x);
+    }
+}
+

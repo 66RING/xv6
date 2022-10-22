@@ -1,3 +1,4 @@
+#![allow(unused)]
 use crate::riscv::{MAXVA, PGSIZE};
 // Physical memory layout
 
