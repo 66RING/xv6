@@ -15,9 +15,11 @@ OBJCOPY := rust-objcopy --binary-architecture=riscv64
 build: env kernel
 
 kernel:
+	@cd ../user && make build
 	@cargo build $(BUILD_MODE)
 
 clean:
+	@cd ../user && make clean
 	cargo clean
 
 env:
@@ -39,16 +41,16 @@ QEMUOPTS += -netdev user,id=net0,hostfwd=udp::$(FWDPORT)-:2000 -object filter-du
 QEMUOPTS += -device e1000,netdev=net0,bus=pcie.0
 endif
 
-qemu: kernel
+qemu: build
 	$(QEMU) $(QEMUOPTS)
 
 
-qemu-gdb: kernel
+qemu-gdb: build
 	@echo "*** Now run 'gdb' in another window." 1>&2
 	$(QEMU) $(QEMUOPTS) -S -s
 
 
 
 
-.PHONY:
+.PHONY: build
 

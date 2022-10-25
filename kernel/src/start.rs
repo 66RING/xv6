@@ -6,11 +6,14 @@ use crate::memlayout::*;
 
 // 设置内核stack
 // 也可在.S中设置，.space 4096*8
+// TODO: remove hard code
+//  我们目前需要比较大是boot stack
 #[no_mangle]
-static STACK0: [u8; STACK_SIZE*2 * NCPU] = [0; STACK_SIZE*2 * NCPU];
+pub static STACK0: [u8; 4096*100] = [0; 4096*100];
 
+// TODO: 存储访问timer的地址
 // a scratch area per CPU for machine-mode timer interrupts.
-static mut TIMER_SCRATCH: [[usize; NCPU]; 5] = [[0]; 5];
+static mut TIMER_SCRATCH: [[usize; 5]; NCPU] = [[0; 5]; NCPU];
 
 // entry.S会跳转到这里
 // no_mangle会避免编译器改名
@@ -29,16 +32,16 @@ pub unsafe fn start() {
     // delegate all interrupts and exceptions to supervisor mode.
     w_medeleg(0xffff);
     w_mideleg(0xffff);
-    intr_on();
+    w_sie(r_sie() | SSIE | STIE | SEIE);
 
-    // 必须
+    // TODO: 必须
     // configure Physical Memory Protection to give supervisor mode
     // access to all of physical memory.
     w_pmpaddr0(0x3fffffffffffff);
     w_pmpcfg0(0xf);
 
     // ask for clock interrupts.
-    timerinit();
+    //timerinit();
     
     // keep each CPU's hartid in its tp register, for cpuid().
     let id = r_mhartid();
@@ -51,32 +54,32 @@ pub unsafe fn start() {
 }
 
 
-// TODO: implment
+// TODO: implement
 fn timerinit() {
     // each CPU has a separate source of timer interrupts.
-    // let id = mhartid::r_mhartid();
+    let id = r_mhartid();
     
-    // // ask the CLINT for a timer interrupt.
-    // let interval = 1000000; // cycles; about 1/10th second in qemu.
-    // let offset = memlayout::CLINT + 0x4000 + 8*(id);
-    // let value = unsafe { core::ptr::read_volatile(memlayout::CLINT_MTIME as *const _) + interval};
-    // unsafe { core::ptr::write_volatile(offset as *mut u64, value)};
+    // ask the CLINT for a timer interrupt.
+    let interval = 1000000; // cycles; about 1/10th second in qemu.
+    let CLINT_MTIMECMP  = |id| CLINT + 0x4000 + 8*(id) ;
+    let value = unsafe { core::ptr::read_volatile(CLINT_MTIME as *const usize) + interval};
+    unsafe { core::ptr::write_volatile(CLINT_MTIMECMP(id) as *mut usize, value)};
 
     
-    // // prepare information in scratch[] for timervec.
-    // // scratch[0..2] : space for timervec to save registers.
-    // // scratch[3] : address of CLINT MTIMECMP register.
-    // // scratch[4] : desired interval (in cycles) between timer interrupts.
-
-    // // uint64 *scratch = &timer_scratch[id][0];
-    // // scratch[3] = CLINT_MTIMECMP(id);
-    // // scratch[4] = interval;
-    // // w_mscratch((uint64)scratch);
-    // let scratch = unsafe {TIMER_SCRATCH[id][0] as *mut usize};
-
+    // prepare information in scratch[] for timervec.
+    // scratch[0..2] : space for timervec to save registers.
+    // scratch[3] : address of CLINT MTIMECMP register.
+    // scratch[4] : desired interval (in cycles) between timer interrupts.
+    unsafe {
+        TIMER_SCRATCH[id][3] = CLINT_MTIMECMP(id);
+        TIMER_SCRATCH[id][4] = interval;
+        let scratch = TIMER_SCRATCH[id][0] as *mut usize;
+        w_mscratch(scratch as usize);
+    }
     
+    extern "C" { fn timervec(); }
     // set the machine-mode trap handler.
-    // w_mtvec((uint64)timervec);
+    w_mtvec(timervec as usize);
     
     // enable machine-mode interrupts.
     w_mstatus(r_mstatus() | MSTATUS_MIE);

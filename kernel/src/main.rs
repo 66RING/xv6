@@ -13,6 +13,7 @@ mod uart;
 mod trap;
 mod proc;
 mod syscall;
+mod sysfile;
 
 use core::arch::global_asm;
 use crate::trap::trapinit;
@@ -22,6 +23,8 @@ global_asm!(include_str!("entry.S"));
 global_asm!(include_str!("kernelvec.S"));
 global_asm!(include_str!("trampoline.S"));
 global_asm!(include_str!("swtch.S"));
+global_asm!(include_str!("link_app.S"));
+
 
 #[no_mangle]
 fn main() {
@@ -30,10 +33,11 @@ fn main() {
     warn!("\\ \\/ /\\ \\ / / '_ \\ _____| '__/ __|\n");
     info!(" >  <  \\ V /| (_) |_____| |  \\__ \\\n");
     debug!("/_/\\_\\  \\_/  \\___/      |_|  |___/\n");
-    error!("May chaos take the world!");
+    error!("May chaos take the world!\n");
 
     procinit();      // process table
-    trapinit();      // trap vectors
+    // TODO: user -> kernel的情况
+    // trapinit();      // trap vectors
 
     userinit();      // first user process
 }

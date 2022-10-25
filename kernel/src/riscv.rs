@@ -112,9 +112,44 @@ pub fn w_satp(x: usize) {
     }
 }
 
-const SSIE: usize = 1 << 1; // software
-const STIE: usize = 1 << 5; // timer
-const SEIE: usize = 1 << 9; // external
+#[inline(always)]
+pub fn r_satp() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {}, satp",
+            out(reg) x,
+        );
+    }
+    x
+}
+
+
+// Supervisor Interrupt Pending
+#[inline(always)]
+pub fn r_sip() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {0}, sip",
+            out(reg) x,
+        );
+    }
+    x
+}
+#[inline(always)]
+pub fn w_sip(x: usize) {
+    unsafe {
+        asm!(
+            "csrw sip, {0}",
+            in(reg) x,
+        );
+    }
+}
+
+pub const SSIE: usize = 1 << 1; // software
+pub const STIE: usize = 1 << 5; // timer
+pub const SEIE: usize = 1 << 9; // external
 
 #[inline(always)]
 pub fn r_sie() -> usize {
@@ -141,10 +176,13 @@ pub fn w_sie(x: usize) {
 
 /// enable all software interrupts
 /// still need to set SIE bit in sstatus
-pub unsafe fn intr_on() {
-    let mut sie = r_sie();
-    sie |= SSIE | STIE | SEIE;
-    w_sie(sie);
+pub fn intr_on() {
+    w_sstatus(r_sstatus() | SSTATUS_SIE);
+}
+
+/// disable device interrupts
+pub fn intr_off() {
+    w_sstatus(r_sstatus() & !SSTATUS_SIE);
 }
 
 #[inline(always)]
@@ -205,6 +243,59 @@ pub fn w_mepc(x: usize) {
 }
 
 #[inline(always)]
+pub fn r_sepc() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {0}, sepc",
+            out(reg) x,
+        );
+    }
+    return x;
+}
+
+#[inline(always)]
+pub fn w_sepc(x: usize) {
+    unsafe {
+        asm!(
+            "csrw sepc, {0}",
+            in(reg) x,
+        );
+    }
+}
+
+// Supervisor Status Register, sstatus
+
+pub const SSTATUS_SPP: usize = 1 << 8;  // Previous mode, 1=Supervisor, 0=User
+pub const SSTATUS_SPIE: usize =  1 << 5; // Supervisor Previous Interrupt Enable
+pub const SSTATUS_UPIE: usize = 1 << 4; // User Previous Interrupt Enable
+pub const SSTATUS_SIE: usize = 1 << 1;  // Supervisor Interrupt Enable
+pub const SSTATUS_UIE: usize =  1 << 0;  // User Interrupt Enable
+
+
+#[inline(always)]
+pub fn r_sstatus() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {0}, sstatus",
+            out(reg) x,
+        );
+    }
+    return x;
+}
+
+#[inline(always)]
+pub fn w_sstatus(x: usize) {
+    unsafe {
+        asm!(
+            "csrw sstatus, {0}",
+            in(reg) x,
+        );
+    }
+}
+
+#[inline(always)]
 pub fn r_medeleg() -> usize {
     let mut x: usize;
     unsafe {
@@ -259,6 +350,18 @@ pub fn w_tp(x: usize) {
 }
 
 #[inline(always)]
+pub fn r_tp() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "mv {0}, tp",
+            out(reg) x
+        );
+    }
+    x
+}
+
+#[inline(always)]
 pub fn vma() {
     unsafe {
         // the zero, zero means flush all TLB entries.
@@ -275,3 +378,45 @@ pub fn w_stvec(x: usize) {
     }
 }
 
+#[inline(always)]
+pub fn w_mtvec(x: usize) {
+    unsafe {
+        asm!("csrw mtvec, {0}",
+             in(reg) x);
+    }
+}
+
+/// Supervisor Trap Cause
+#[inline(always)]
+pub fn r_scause() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {0}, scause",
+            out(reg) x
+        );
+    }
+    x
+}
+
+
+// Supervisor Trap Value
+#[inline(always)]
+pub fn r_stval() -> usize {
+    let mut x: usize;
+    unsafe {
+        asm!(
+            "csrr {0}, stval",
+            out(reg) x
+        );
+    }
+    x
+}
+
+#[inline(always)]
+pub fn w_mscratch(x: usize) {
+    unsafe {
+        asm!("csrw mscratch, {0}",
+             in(reg) x);
+    }
+}

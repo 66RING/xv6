@@ -1,6 +1,7 @@
 .section .text.entry
 .global _entry
-.equ STACK_SIZE, 4096*2
+# TODO: remove hard code
+.equ STACK_SIZE, 4096*100
 _entry:
 	# set up a stack for C.
 	# stack0 is declared in start.rs,
