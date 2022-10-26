@@ -1,6 +1,6 @@
 use crate::riscv::*;
 use crate::syscall::syscall;
-use crate::proc::PROC;
+use crate::proc::PROC_MANAGER;
 
 extern "C" { 
     fn userret(trapframe: usize) -> !; 
@@ -38,20 +38,27 @@ pub fn usertrap() -> ! {
     //  1.1 对于系统调用, trapframe.a7用于存储系统调用号
     //      trapframe.a0 ~ trapframe.a5分别存储各个参数(见argraw())
     // w_stvec(kernelvec as usize);
-    let proc = PROC.lock();
-    let mut p = proc.procs[proc.curr_id];
+    let mut proc = PROC_MANAGER.lock();
+    let curr = proc.curr_id;
+    let mut p = &mut proc.procs[curr];
     // WARN: proc.procs[proc.curr_id] != p !!!!!居然不一样!!!!!!
     // TODO: review
     // save user program counter.
     p.trapframe.epc = r_sepc();
-    drop(proc);
 
     if r_scause() == 8 {
+        // TODO: 真他码的丑啊
+        p.trapframe.epc += 4;
+
+        drop(proc);
+        intr_on();
+
         syscall();
     } else {
-        printf!("usertrap(): unexpected scause {:#x} pid={}\n", r_scause(), p.pid);
-        printf!("            sepc={:#x} stval={:#x}\n", r_sepc(), r_stval());
-        p.killed = 1;
+        // printf!("usertrap(): unexpected scause {:#x} pid={}\n", r_scause(), p.pid);
+        // printf!("            sepc={:#x} stval={:#x}\n", r_sepc(), r_stval());
+        // p.killed = 1;
+        drop(proc);
         unimplemented!();
     }
 
@@ -73,8 +80,9 @@ pub fn usertrapret() -> ! {
     // send syscalls, interrupts, and exceptions to trampoline.S
     w_stvec(uservec as usize);
 
-    let proc = PROC.lock();
-    let mut p = proc.procs[proc.curr_id];
+    let mut proc = PROC_MANAGER.lock();
+    let curr = proc.curr_id;
+    let mut p = &mut proc.procs[curr];
     // kstack存入trapframe
     // set up trapframe values that uservec will need when
     // the process next re-enters the kernel.

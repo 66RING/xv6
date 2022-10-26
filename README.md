@@ -120,6 +120,12 @@ TODO:
 	* 并且剔除了metadata
 
 
+### xv6化
+
+- 没有所谓`proc_manager`, 反而抽象成`cpu`和`proc_pool`
+	* `proc_pool`的所有的
+	* `cpu`管理当前的
+
 ### Debug
 
 1. 还不不能照抄xv6的trap实现
@@ -140,3 +146,5 @@ TODO:
 	- 像xv6那样的myproc已经不行了
 	- 在swtch这种不会返回rust代码的程序中应小心临时变量
 	- **使用RefCell**
+8. 因为我们os常有`->!`, 所以所有权常常被移动了, 这样一来`p.trapframe`就不是原来的了
+9. 处理系统调用时epc记得加4, 即跳过`ecall`

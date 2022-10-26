@@ -1,11 +1,12 @@
 // TODO: unused check
 #![allow(unused)]
 
-use crate::param::*;
+use crate::{param::*};
 use core::arch::asm;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use crate::trap::usertrapret;
+use core::cell::{RefCell, RefMut};
 
 #[repr(align(4096))]
 #[derive(Copy, Clone)]
@@ -188,7 +189,7 @@ pub struct ProcManager {
 }
 
 lazy_static! {
-    pub static ref PROC: Mutex<ProcManager> = unsafe { Mutex::new(ProcManager::new()) };
+    pub static ref PROC_MANAGER: Mutex<ProcManager> = unsafe { Mutex::new(ProcManager::new()) };
 }
 
 /// 在进程内核栈中创建一个trapframe, 以完成用户态切换
@@ -255,7 +256,7 @@ pub fn get_num_app() -> usize {
 /// 加载第一个用户程序
 pub fn userinit() {
     // FIXME: 运行第一个程序, 程序退出后触发exit系统调用, 在运行下一个
-    let mut p = PROC.lock();
+    let mut p = PROC_MANAGER.lock();
     let mut procs = p.procs;
     let task0 = &mut procs[0];
     task0.state = ProcState::RUNNING;
@@ -310,16 +311,16 @@ fn load_apps() {
 
 pub fn procinit() {
     // FIXME: just batch system for now
-    println!("processs initializing");
     load_apps();
+    println!("load_app done");
     // lazy_static, 第一次调用才触发初始化
     // 初始化进程的内核栈指针
 }
 
-/// 获取当前进程, lockup 
-pub fn myproc() -> Proc {
-    let pp = PROC.lock();
-    let curr = pp.curr_id;
+// /// 获取当前进程, lockup 
+// pub fn myproc() -> &'static mut Proc {
+//     let mut pp = PROC_MANAGER.lock();
+//     let curr = pp.curr_id;
 
-    return pp.procs[curr];
-}
+//     return &mut pp.procs[curr];
+// }

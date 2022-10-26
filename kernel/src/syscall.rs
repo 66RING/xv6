@@ -1,4 +1,4 @@
-use crate::proc::{PROC, myproc};
+use crate::proc::{PROC_MANAGER};
 use crate::sysfile::sys_write;
 
 //// System call numbers
@@ -27,22 +27,14 @@ const SYS_close: usize = 21;
 const SYS_yield: usize = 22;
 
 
-// 用户态syscall协议: **通过a7寄存器传递系统调用号**
-// sub entry {
-//     my $name = shift;
-//     print ".global $name\n";
-//     print "${name}:\n";
-//     print " li a7, SYS_${name}\n";
-//     print " ecall\n";
-//     print " ret\n";
-// }
-
-
 /// 从trapframe中读取下陷时保存的函数调用参数
 /// TODO: 怎么访问到trapframe呢??
 ///     保存在proc结构的trapframe中
 fn argraw(n: isize) -> usize {
-    let p = myproc();
+    // let p = myproc();
+    let mut proc = PROC_MANAGER.lock();
+    let curr = proc.curr_id;
+    let mut p = &mut proc.procs[curr];
     let tf = p.trapframe;
     match n {
         0 => {
@@ -69,9 +61,7 @@ fn argraw(n: isize) -> usize {
     }
 }
 
-/// @param: n, 第几个参数
-/// @param: ip, integer pointr?, 待赋值的参数
-/// @return: 错误代码, -1出错
+/// 选择第n个参数, ip作为接收者, 出错返回-1
 pub fn argint(n: isize, ip: &mut isize) -> isize {
   *ip = argraw(n) as isize;
   return 0;
@@ -80,9 +70,7 @@ pub fn argint(n: isize, ip: &mut isize) -> isize {
 /// Retrieve an argument as a pointer.
 /// Doesn't check for legality, since
 /// copyin/copyout will do that.
-/// @param: n第几个参数
-/// @param: ip地址保存者
-/// @return: 错误代码, 小于0出错
+/// 选择第n个参数, ip作为接收者, 出错返回-1
 pub fn argaddr(n: isize, ip: &mut usize) -> isize {
   *ip = argraw(n);
   return 0;
@@ -90,12 +78,20 @@ pub fn argaddr(n: isize, ip: &mut usize) -> isize {
 
 
 pub fn syscall() {
-    let mut p = myproc();
+    // let mut p = myproc();
+    let mut proc = PROC_MANAGER.lock();
+    let curr = proc.curr_id;
+    let mut p = &mut proc.procs[curr];
     // 获取系统调用号
     let num  = p.trapframe.a7;
     // TODO: 简化, 应添加更多检测
+    drop(proc);
     if num == SYS_write {
-        p.trapframe.a0 = sys_write() as usize;
+        let a0 = sys_write() as usize;
+        let mut proc = PROC_MANAGER.lock();
+        let curr = proc.curr_id;
+        let mut p = &mut proc.procs[curr];
+        p.trapframe.a0 = a0
     } else {
         error!("unimplemented syscall {}\n", num);
         unimplemented!();
