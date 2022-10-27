@@ -1,4 +1,4 @@
-use crate::proc::{PROC_MANAGER};
+use crate::proc::{PROC_POOL, myproc};
 use crate::sysfile::sys_write;
 
 //// System call numbers
@@ -31,10 +31,7 @@ const SYS_yield: usize = 22;
 /// TODO: 怎么访问到trapframe呢??
 ///     保存在proc结构的trapframe中
 fn argraw(n: isize) -> usize {
-    // let p = myproc();
-    let mut proc = PROC_MANAGER.lock();
-    let curr = proc.curr_id;
-    let mut p = &mut proc.procs[curr];
+    let mut p = myproc();
     let tf = p.trapframe;
     match n {
         0 => {
@@ -78,20 +75,12 @@ pub fn argaddr(n: isize, ip: &mut usize) -> isize {
 
 
 pub fn syscall() {
-    // let mut p = myproc();
-    let mut proc = PROC_MANAGER.lock();
-    let curr = proc.curr_id;
-    let mut p = &mut proc.procs[curr];
+    let mut p = myproc();
     // 获取系统调用号
     let num  = p.trapframe.a7;
     // TODO: 简化, 应添加更多检测
-    drop(proc);
     if num == SYS_write {
-        let a0 = sys_write() as usize;
-        let mut proc = PROC_MANAGER.lock();
-        let curr = proc.curr_id;
-        let mut p = &mut proc.procs[curr];
-        p.trapframe.a0 = a0
+        p.trapframe.a0 = sys_write() as usize;
     } else {
         error!("unimplemented syscall {}\n", num);
         unimplemented!();

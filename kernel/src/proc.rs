@@ -1,12 +1,13 @@
 // TODO: unused check
 #![allow(unused)]
 
-use crate::{param::*};
+use crate::param::*;
+use crate::trap::usertrapret;
 use core::arch::asm;
+use core::cell::{RefCell, RefMut};
 use lazy_static::lazy_static;
 use spin::Mutex;
-use crate::trap::usertrapret;
-use core::cell::{RefCell, RefMut};
+use crate::riscv::*;
 
 #[repr(align(4096))]
 #[derive(Copy, Clone)]
@@ -21,15 +22,13 @@ struct UserStack {
 }
 
 // FIXME: 临时, 待虚拟内存后删除硬编码
-static KERNEL_STACK: [KernelStack; NPROC] = [
-    KernelStack { data: [0; KERNEL_STACK_SIZE], };
-    NPROC
-];
+static KERNEL_STACK: [KernelStack; NPROC] = [KernelStack {
+    data: [0; KERNEL_STACK_SIZE],
+}; NPROC];
 
-static USER_STACK: [UserStack; NPROC] = [
-    UserStack { data: [0; USER_STACK_SIZE], };
-    NPROC
-];
+static USER_STACK: [UserStack; NPROC] = [UserStack {
+    data: [0; USER_STACK_SIZE],
+}; NPROC];
 
 impl KernelStack {
     fn get_sp(&self) -> usize {
@@ -39,7 +38,9 @@ impl KernelStack {
     /// @return: trapframe压栈后内核栈指针
     pub fn push_context(&self, trap_cx: TrapFrame) -> usize {
         let trap_cx_ptr = (self.get_sp() - core::mem::size_of::<TrapFrame>()) as *mut TrapFrame;
-        unsafe { *trap_cx_ptr = trap_cx; }
+        unsafe {
+            *trap_cx_ptr = trap_cx;
+        }
         trap_cx_ptr as usize
     }
 }
@@ -49,8 +50,6 @@ impl UserStack {
         self.data.as_ptr() as usize + USER_STACK_SIZE
     }
 }
-
-
 
 #[derive(Clone, Copy)]
 pub enum ProcState {
@@ -68,12 +67,25 @@ pub struct Proc {
     // TODO: wait for kalloc to implement
     // trapframe暂时不用保存
     pub trapframe: TrapFrame, // data page for trampoline.S
-    pub context: Context, // data page for trampoline.S
-    pub state: ProcState, // Process state
+    pub context: Context,     // data page for trampoline.S
+    pub state: ProcState,     // Process state
     pub kstack: usize,
 
     pub killed: i64,
     pub pid: i64,
+}
+
+impl Proc {
+    pub fn zero_init() -> Self {
+        Proc {
+            context: Context::zero_init(),
+            state: ProcState::UNUSED,
+            kstack: 0,
+            trapframe: TrapFrame::zero_init(),
+            killed: 0,
+            pid: 0,
+        }
+    }
 }
 
 #[repr(C)]
@@ -111,7 +123,6 @@ impl Context {
         ctx.sp = kstack_ptr;
         ctx
     }
-
 }
 
 #[repr(C)]
@@ -162,7 +173,9 @@ impl TrapFrame {
             ..Default::default()
         }
     }
-    pub fn set_sp(&mut self, sp: usize) { self.sp = sp; }
+    pub fn set_sp(&mut self, sp: usize) {
+        self.sp = sp;
+    }
     pub fn app_init_context(entry: usize, sp: usize) -> Self {
         // TODO: xv6中sstatus怎么处理? 和rcore不同
         // let mut sstatus = sstatus::read();
@@ -175,70 +188,76 @@ impl TrapFrame {
 }
 
 extern "C" {
-    pub fn swtch(
-        current_task_cx_ptr: *mut Context,
-        next_task_cx_ptr: *const Context,
-    );
+    pub fn swtch(current_task_cx_ptr: *mut Context, next_task_cx_ptr: *const Context);
 }
 
+static mut CPUS: [CPU; NCPU] = [CPU::zero(); NCPU];
 
-// 应用管理器(PCB)
-pub struct ProcManager {
-    pub procs: [Proc; NPROC],
-    pub curr_id: usize,
+pub struct CPU {
+    process: *mut Proc,
 }
 
+impl CPU {
+    pub const fn zero() -> Self {
+        Self {
+            process: core::ptr::null_mut(),
+        }
+    }
+}
+
+// 所有进程
 lazy_static! {
-    pub static ref PROC_MANAGER: Mutex<ProcManager> = unsafe { Mutex::new(ProcManager::new()) };
+    pub static ref PROC_POOL: Mutex<[Proc; NPROC]> =
+        unsafe { Mutex::new([Proc::zero_init(); NPROC]) };
 }
 
 /// 在进程内核栈中创建一个trapframe, 以完成用户态切换
 ///      trapframe中记录了: 入口地址, 用户栈指针
 /// return: 进程内核栈
 pub fn init_app_cx(app_id: usize) -> usize {
-    KERNEL_STACK[app_id].push_context(
-        TrapFrame::app_init_context(get_base_i(app_id), USER_STACK[app_id].get_sp()))
+    KERNEL_STACK[app_id].push_context(TrapFrame::app_init_context(
+        get_base_i(app_id),
+        USER_STACK[app_id].get_sp(),
+    ))
 }
 
+//impl ProcManager {
+//    pub fn new() -> ProcManager {
+//        // 获取总app数
+//        let num_app = get_num_app();
+//        // 创建tcb数组(未初始化)
+//        let mut procs = [Proc {
+//            context: Context::zero_init(),
+//            state: ProcState::UNUSED,
+//            kstack: 0,
+//            trapframe: TrapFrame::zero_init(),
+//            killed: 0,
+//            pid: 0,
+//        }; NPROC];
+//        // 初始化每个任务 -> Ready & cx
+//        //  **为每个任务的内核栈都伪造一个TrapFrame**
+//        //  TrapContext.sp -> **用户栈**
+//        //  TaskContext.sp -> 内核栈
+//        //
+//        //  __swtch切换任务的内核栈, 寄存器上下文
+//        //  __userret切换内核栈到用户栈
+//        for i in 0..num_app {
+//            // TODO:
+//            // procs[i].context = Context::goto_userret(init_app_cx(i));
+//            // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
+//            procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
+//            procs[i].state = ProcState::RUNNABLE;
+//            procs[i].kstack = KERNEL_STACK[i].get_sp();
+//            procs[i].pid = i as i64;
 
-impl ProcManager {
-    pub fn new() -> ProcManager {
-        // 获取总app数
-        let num_app = get_num_app();
-        // 创建tcb数组(未初始化)
-        let mut procs = [Proc {
-            context: Context::zero_init(),
-            state: ProcState::UNUSED,
-            kstack: 0,
-            trapframe: TrapFrame::zero_init(),
-            killed: 0,
-            pid: 0,
-        }; NPROC];
-        // 初始化每个任务 -> Ready & cx
-        //  **为每个任务的内核栈都伪造一个TrapFrame**
-        //  TrapContext.sp -> **用户栈**
-        //  TaskContext.sp -> 内核栈
-        //
-        //  __swtch切换任务的内核栈, 寄存器上下文
-        //  __userret切换内核栈到用户栈
-        for i in 0..num_app {
-            // TODO:
-            // procs[i].context = Context::goto_userret(init_app_cx(i));
-            // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
-            procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
-            procs[i].state = ProcState::RUNNABLE;
-            procs[i].kstack = KERNEL_STACK[i].get_sp();
-            procs[i].pid = i as i64;
-
-            // TODO: 整理
-            procs[i].trapframe.epc = get_base_i(i);
-            procs[i].trapframe.sp = USER_STACK[i].get_sp();
-        }
-        // 返回全局任务管理器实例
-        ProcManager { procs, curr_id: 0 }
-    }
-
-}
+//            // TODO: 整理
+//            procs[i].trapframe.epc = get_base_i(i);
+//            procs[i].trapframe.sp = USER_STACK[i].get_sp();
+//        }
+//        // 返回全局任务管理器实例
+//        ProcManager { procs, curr_id: 0 }
+//    }
+//}
 
 // 我们用户程序的编译脚本中的协议规定了加载地址将0x20000(APP_SIZE_LIMIT)
 // 从而简单计算出加载地址
@@ -253,74 +272,96 @@ pub fn get_num_app() -> usize {
     unsafe { (_num_app as usize as *const usize).read_volatile() }
 }
 
-/// 加载第一个用户程序
+/// 运行第一个用户程序
 pub fn userinit() {
     // FIXME: 运行第一个程序, 程序退出后触发exit系统调用, 在运行下一个
-    let mut p = PROC_MANAGER.lock();
-    let mut procs = p.procs;
-    let task0 = &mut procs[0];
+    let task0 = myproc();
     task0.state = ProcState::RUNNING;
     let next_task_cx_ptr = &task0.context as *const Context;
     // 运行第一个任务前并没有执行任何app，分配一个unused上下文
     let mut _unused = Context::zero_init();
-    drop(p);
     // before this, we should drop local variables that must be dropped manually
     unsafe {
-        swtch(
-            &mut _unused as *mut Context,
-            next_task_cx_ptr,
-        );
+        swtch(&mut _unused as *mut Context, next_task_cx_ptr);
     }
     panic!("unreachable in run_first_task!");
 }
 
 /// TODO: 重新抽象
+/// 将程序加载到对应的内存地址中
 fn load_apps() {
-    extern "C" { fn _num_app(); }
+    extern "C" {
+        fn _num_app();
+    }
 
-    let num_app_ptr =  _num_app as usize as *const usize;
+    let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
     // TODO : review
-    let app_start = unsafe {
-        core::slice::from_raw_parts(num_app_ptr.add(1), num_app+1)
-    };
+    let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
     // load app    // clear i-cache first
-    unsafe { asm!("fence.i"); }
+    unsafe {
+        asm!("fence.i");
+    }
     // load apps
     for i in 0..num_app {
         let base_i = get_base_i(i);
         // clear region
-        (base_i..base_i+APP_SIZE_LIMIT).for_each(|addr| unsafe {
-            (addr as *mut u8).write_volatile(0)
-        });
+        (base_i..base_i + APP_SIZE_LIMIT)
+            .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
         // load app from data section to memory
         let src = unsafe {
-            core::slice::from_raw_parts(
-                app_start[i] as *const u8,
-                app_start[i+1] - app_start[i]
-            )
+            core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i])
         };
         // 第i个app加载的base_i
-        let dst = unsafe {
-            core::slice::from_raw_parts_mut(base_i as *mut u8, src.len())
-        };
+        let dst = unsafe { core::slice::from_raw_parts_mut(base_i as *mut u8, src.len()) };
         dst.copy_from_slice(src);
     }
 }
 
-
+/// 初始化各个程序, 并为CPU附上初始程序
 pub fn procinit() {
     // FIXME: just batch system for now
+    let mut procs = PROC_POOL.lock();
+    let num_app = get_num_app();
+    // 初始化每个任务 -> Ready & cx
+    //  **为每个任务的内核栈都伪造一个TrapFrame**
+    //  TrapContext.sp -> **用户栈**
+    //  TaskContext.sp -> 内核栈
+    //
+    //  __swtch切换任务的内核栈, 寄存器上下文
+    //  __userret切换内核栈到用户栈
+    for i in 0..num_app {
+        // TODO:
+        // procs[i].context = Context::goto_userret(init_app_cx(i));
+        // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
+        procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
+        procs[i].state = ProcState::RUNNABLE;
+        procs[i].kstack = KERNEL_STACK[i].get_sp();
+        procs[i].pid = i as i64;
+
+        // TODO: 整理
+        procs[i].trapframe.epc = get_base_i(i);
+        procs[i].trapframe.sp = USER_STACK[i].get_sp();
+    }
+
+    // TODO: 为cpu附上初始程序
+    let p = &mut procs[0];
+    let c = mycpu();
+    c.process = p as *mut Proc;
+
     load_apps();
     println!("load_app done");
     // lazy_static, 第一次调用才触发初始化
     // 初始化进程的内核栈指针
 }
 
-// /// 获取当前进程, lockup 
-// pub fn myproc() -> &'static mut Proc {
-//     let mut pp = PROC_MANAGER.lock();
-//     let curr = pp.curr_id;
+/// 通过CPU di寄存器获取当前cpu
+pub fn mycpu() -> &'static mut CPU {
+    unsafe { &mut CPUS[r_tp()] }
+}
 
-//     return &mut pp.procs[curr];
-// }
+/// 获取当前cpu进程
+pub fn myproc() -> &'static mut Proc {
+    let c = mycpu();
+    unsafe { &mut(*c.process) }
+}

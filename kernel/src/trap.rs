@@ -1,6 +1,6 @@
 use crate::riscv::*;
 use crate::syscall::syscall;
-use crate::proc::PROC_MANAGER;
+use crate::proc::{PROC_POOL, myproc};
 
 extern "C" { 
     fn userret(trapframe: usize) -> !; 
@@ -20,10 +20,9 @@ pub fn kerneltrap() {
 }
 
 /// 用户态陷入内核态的处理函数: 系统调用, page fault等
+/// usertrap_handler
 #[no_mangle]
 pub fn usertrap() -> ! {
-    let which_dev = 0;
-
     if (r_sstatus() & SSTATUS_SPP) != 0 {
         panic!("usertrap: not from user mode");
     }
@@ -38,27 +37,19 @@ pub fn usertrap() -> ! {
     //  1.1 对于系统调用, trapframe.a7用于存储系统调用号
     //      trapframe.a0 ~ trapframe.a5分别存储各个参数(见argraw())
     // w_stvec(kernelvec as usize);
-    let mut proc = PROC_MANAGER.lock();
-    let curr = proc.curr_id;
-    let mut p = &mut proc.procs[curr];
-    // WARN: proc.procs[proc.curr_id] != p !!!!!居然不一样!!!!!!
-    // TODO: review
+    let mut p = myproc();
     // save user program counter.
     p.trapframe.epc = r_sepc();
 
     if r_scause() == 8 {
-        // TODO: 真他码的丑啊
         p.trapframe.epc += 4;
 
-        drop(proc);
         intr_on();
-
         syscall();
     } else {
-        // printf!("usertrap(): unexpected scause {:#x} pid={}\n", r_scause(), p.pid);
-        // printf!("            sepc={:#x} stval={:#x}\n", r_sepc(), r_stval());
-        // p.killed = 1;
-        drop(proc);
+        printf!("usertrap(): unexpected scause {:#x} pid={}\n", r_scause(), p.pid);
+        printf!("            sepc={:#x} stval={:#x}\n", r_sepc(), r_stval());
+        p.killed = 1;
         unimplemented!();
     }
 
@@ -80,14 +71,13 @@ pub fn usertrapret() -> ! {
     // send syscalls, interrupts, and exceptions to trampoline.S
     w_stvec(uservec as usize);
 
-    let mut proc = PROC_MANAGER.lock();
-    let curr = proc.curr_id;
-    let mut p = &mut proc.procs[curr];
+    let mut p = myproc();
     // kstack存入trapframe
     // set up trapframe values that uservec will need when
     // the process next re-enters the kernel.
     p.trapframe.kernel_sp = p.kstack;
-    p.trapframe.kernel_satp = r_satp();
+    // // TODO: 暂不分页
+    // p.trapframe.kernel_satp = r_satp();
     p.trapframe.kernel_trap = usertrap as usize;
     p.trapframe.kernel_hartid = r_tp();
     let trapframe = &p.trapframe as *const _ as usize;
@@ -108,18 +98,5 @@ pub fn usertrapret() -> ! {
     // // tell trampoline.S the user page table to switch to.
     // uint64 satp = MAKE_SATP(p->pagetable);
 
-    drop(proc);
     unsafe {userret(trapframe);}
 }
-
-// trapframe: 0x80009db8
-// trapframe.a7: 0x80009e60
-//
-// uservec:1: 一切正常
-//  sscratch -> trapframe
-//  sd a7,168(a0) OK
-//  x /x 0x80009db8+168 == 16 OK
-//
-//  !!用错proc了!!
-// 难道是因为我drop了
-
