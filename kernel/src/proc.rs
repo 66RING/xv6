@@ -71,6 +71,9 @@ pub struct Proc {
     pub state: ProcState,     // Process state
     pub kstack: usize,
 
+    pub chan: usize,          // If non-zero, sleeping on chan, 时钟中断会检测各个proc是chan情况,
+                              // 到点wakeup
+
     pub killed: i64,
     pub pid: i64,
 }
@@ -79,7 +82,7 @@ impl Proc {
     pub fn zero_init() -> Self {
         Proc {
             context: Context::zero_init(),
-            state: ProcState::UNUSED,
+            state: ProcState::RUNNABLE,
             kstack: 0,
             trapframe: TrapFrame::zero_init(),
             killed: 0,
@@ -276,7 +279,6 @@ pub fn get_num_app() -> usize {
 pub fn userinit() {
     // FIXME: 运行第一个程序, 程序退出后触发exit系统调用, 在运行下一个
     let task0 = myproc();
-    task0.state = ProcState::RUNNING;
     let next_task_cx_ptr = &task0.context as *const Context;
     // 运行第一个任务前并没有执行任何app，分配一个unused上下文
     let mut _unused = Context::zero_init();
@@ -348,6 +350,7 @@ pub fn procinit() {
     let p = &mut procs[0];
     let c = mycpu();
     c.process = p as *mut Proc;
+    p.state = ProcState::RUNNING;
 
     load_apps();
     println!("load_app done");
@@ -365,3 +368,29 @@ pub fn myproc() -> &'static mut Proc {
     let c = mycpu();
     unsafe { &mut(*c.process) }
 }
+
+/// TODO: 简化版: 调度下一个可运行的程序
+/// 应该的切换到scheduler, 这里直接调度下一个
+pub fn sched() {
+    let p = myproc();
+    let app_num = get_num_app();
+    let mut procs = PROC_POOL.lock();
+    let next_id = (p.pid + 1) as usize;
+    if next_id >= app_num {
+        panic!("run out of process");
+    }
+    let next_proc = &mut procs[next_id];
+    let mut c = mycpu();
+    c.process = next_proc as *mut Proc;
+    p.state = ProcState::RUNNING;
+
+    let old_ctx = &mut p.context as *mut Context;
+    let next_ctx = &next_proc.context as *const Context;
+    drop(procs);
+
+    unsafe {
+        swtch(old_ctx, next_ctx);
+    }
+    unreachable!();
+}
+

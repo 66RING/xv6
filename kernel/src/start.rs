@@ -54,7 +54,8 @@ pub unsafe fn start() {
 }
 
 
-// TODO: implement
+/// TODO: implement
+/// review checkout spec
 fn timerinit() {
     // each CPU has a separate source of timer interrupts.
     let id = r_mhartid();
@@ -70,12 +71,10 @@ fn timerinit() {
     // scratch[0..2] : space for timervec to save registers.
     // scratch[3] : address of CLINT MTIMECMP register.
     // scratch[4] : desired interval (in cycles) between timer interrupts.
-    unsafe {
-        TIMER_SCRATCH[id][3] = CLINT_MTIMECMP(id);
-        TIMER_SCRATCH[id][4] = interval;
-        let scratch = TIMER_SCRATCH[id][0] as *mut usize;
-        w_mscratch(scratch as usize);
-    }
+    let scratch = unsafe { &mut TIMER_SCRATCH[0] };
+    scratch[3] = CLINT_MTIMECMP(id);
+    scratch[4] = interval;
+    w_mscratch(scratch.as_ptr() as usize);
     
     extern "C" { fn timervec(); }
     // set the machine-mode trap handler.

@@ -1,14 +1,16 @@
 use crate::riscv::*;
 use crate::syscall::syscall;
-use crate::proc::{PROC_POOL, myproc};
+use crate::proc::myproc;
+use lazy_static::lazy_static;
+use spin::Mutex;
+
+lazy_static! { pub static ref TICKS: Mutex<usize> = unsafe { Mutex::new(0) }; }
 
 extern "C" { 
     fn userret(trapframe: usize) -> !; 
     fn uservec(trapframe: usize) -> !; 
     fn kernelvec(); 
-    fn timervec(); 
 }
-
 
 pub fn trapinit() {
     w_stvec(kernelvec as usize);

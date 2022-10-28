@@ -1,30 +1,31 @@
 use crate::proc::{PROC_POOL, myproc};
 use crate::sysfile::sys_write;
+use crate::sysproc::sys_exit;
 
 //// System call numbers
-const SYS_fork: usize = 1;
-const SYS_exit: usize = 2;
-const SYS_wait: usize = 3;
-const SYS_pipe: usize = 4;
-const SYS_read: usize = 5;
-const SYS_kill: usize = 6;
-const SYS_exec: usize = 7;
-const SYS_fstat: usize = 8;
-const SYS_chdir: usize = 9;
-const SYS_dup: usize = 10;
-const SYS_getpid: usize = 11;
-const SYS_sbrk: usize = 12;
-const SYS_sleep: usize = 13;
-const SYS_uptime: usize = 14;
-const SYS_open: usize = 15;
-const SYS_write: usize = 16;
-const SYS_mknod: usize = 17;
-const SYS_unlink: usize = 18;
-const SYS_link: usize = 19;
-const SYS_mkdir: usize = 20;
-const SYS_close: usize = 21;
+const SYS_FORK: usize = 1;
+const SYS_EXIT: usize = 2;
+const SYS_WAIT: usize = 3;
+const SYS_PIPE: usize = 4;
+const SYS_READ: usize = 5;
+const SYS_KILL: usize = 6;
+const SYS_EXEC: usize = 7;
+const SYS_FSTAT: usize = 8;
+const SYS_CHDIR: usize = 9;
+const SYS_DUP: usize = 10;
+const SYS_GETPID: usize = 11;
+const SYS_SBRK: usize = 12;
+const SYS_SLEEP: usize = 13;
+const SYS_UPTIME: usize = 14;
+const SYS_OPEN: usize = 15;
+const SYS_WRITE: usize = 16;
+const SYS_MKNOD: usize = 17;
+const SYS_UNLINK: usize = 18;
+const SYS_LINK: usize = 19;
+const SYS_MKDIR: usize = 20;
+const SYS_CLOSE: usize = 21;
 // add-on
-const SYS_yield: usize = 22;
+const SYS_YIELD: usize = 22;
 
 
 /// 从trapframe中读取下陷时保存的函数调用参数
@@ -79,11 +80,10 @@ pub fn syscall() {
     // 获取系统调用号
     let num  = p.trapframe.a7;
     // TODO: 简化, 应添加更多检测
-    if num == SYS_write {
-        p.trapframe.a0 = sys_write() as usize;
-    } else {
-        error!("unimplemented syscall {}\n", num);
-        unimplemented!();
+    match num {
+        SYS_WRITE => p.trapframe.a0 = sys_write() as usize,
+        SYS_EXIT => p.trapframe.a0 = sys_exit() as usize,
+        _ =>  panic!("invalid syscall {}", num),
     }
 }
 

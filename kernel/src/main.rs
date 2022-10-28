@@ -14,6 +14,7 @@ mod trap;
 mod proc;
 mod syscall;
 mod sysfile;
+mod sysproc;
 
 use core::arch::global_asm;
 use crate::trap::trapinit;
