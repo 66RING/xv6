@@ -7,6 +7,7 @@ mod memlayout;
 mod param;
 #[macro_use]
 mod printf;
+#[macro_use]
 mod riscv;
 mod start;
 mod uart;
@@ -15,8 +16,11 @@ mod proc;
 mod syscall;
 mod sysfile;
 mod sysproc;
+mod kalloc;
+mod string;
 
 use core::arch::global_asm;
+use crate::kalloc::{kinit, allocator_test};
 use crate::trap::trapinit;
 use crate::proc::{procinit, userinit};
 
@@ -36,6 +40,8 @@ fn main() {
     debug!("/_/\\_\\  \\_/  \\___/      |_|  |___/\n");
     error!("May chaos take the world!\n");
 
+    kinit();
+    allocator_test();
     procinit();      // process table
     // TODO: user -> kernel的情况
     // trapinit();      // trap vectors

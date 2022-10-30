@@ -71,9 +71,6 @@ pub struct Proc {
     pub state: ProcState,     // Process state
     pub kstack: usize,
 
-    pub chan: usize,          // If non-zero, sleeping on chan, 时钟中断会检测各个proc是chan情况,
-                              // 到点wakeup
-
     pub killed: i64,
     pub pid: i64,
 }
