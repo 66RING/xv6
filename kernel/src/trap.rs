@@ -23,6 +23,7 @@ pub fn kerneltrap() {
 
 /// 用户态陷入内核态的处理函数: 系统调用, page fault等
 /// usertrap_handler
+/// TODO: 补完
 #[no_mangle]
 pub fn usertrap() -> ! {
     if (r_sstatus() & SSTATUS_SPP) != 0 {
@@ -31,9 +32,6 @@ pub fn usertrap() -> ! {
     // send interrupts and exceptions to kerneltrap(),
     // since we're now in the kernel.
     w_stvec(kernelvec as usize);
-
-
-    // TODO: 补完
 
     // 1. 根据trap的原因(系统调用, page fault)分case处理
     //  1.1 对于系统调用, trapframe.a7用于存储系统调用号
@@ -62,7 +60,7 @@ pub fn usertrap() -> ! {
 /// 返回用户态
 /// 1. 设置用户态traphandler
 /// 2. 调用userret返回用户态, 并将trapframe作为参数传入a0寄存器
-/// TODO: review
+/// TODO: 补完
 #[no_mangle]
 pub fn usertrapret() -> ! {
     // we're about to switch the destination of traps from

@@ -1,46 +1,13 @@
 ## ch2 多道程序/系统调用
 
-- TODO
-	* xv6 trap参数协议
+**重点是上下文切换的逻辑**
 
-TODO: **重点是上下文切换的逻辑**
-
-- Q: xv6
-	* usertrapret
-	* usertrap
-	* usertrap
-	* kerneltrap
-	* kernelvec
-	* forkret -> usertrapret -> userret
-
-1. 先`swtch`切换proc
-	- 切换寄存器上下文
-	- 切换**trapframe**, 通过切换内核栈指针隐式进行, 
-2. TODO: `swtch`结束, 并没有完全进入用户态, 还有一部分内核态残余
-	- pc到了`userret`
-	- **sp仍指向进程的内核栈**, 通过trapframe进入用户态
-
-- **trap**
-	* trapinit();      // trap vectors
-	* trapinithart();  // install kernel trap vector
-	* kernelvec.S
-		+ TODO: 分析
-	* struct trapframe // data page for trampoline.S
-- 系统调用syscall
-	* TODO:
-	* exit
-		+ 接收用户程序退出, 运行下一个
-	* print
-- 分配内核栈
-- 中断处理
-	* 时钟中断
-- 临时内核栈和用户栈
-	* 因为还没实现虚拟内存和内存映射
-
-- TODO
-	* 检查swtch, userret和rcore的兼容性
-
-- 静态分配内核栈和用户栈, 待虚拟内存和内存映射实现
+- 程序第一次启动, 从内核态返回用户态
+	* usertrapret(准备返回, stvec等) -> userret(恢复现场) -> sret
+	* 没有处理trap的过程
+- 从用户态下陷内核态, 再从内核态返回
+	* uservec(保存现场到trapframe) -> usertrap(处理trap: swtch, syscall等) -> usertrapret(准备返回, stvec等) -> userret(恢复现场) -> sret
+- 静态大数组模拟内核栈和用户栈, 待虚拟内存和内存映射实现
 
 
 ### 机器状态
@@ -55,6 +22,7 @@ TODO: **重点是上下文切换的逻辑**
 	* 从异常状态返回原来状态(mode), 并根据对应epc设置pc指针
 - ret
 	* 普通函数返回会返回到ra寄存器记录的地址, 返回值保存到a0寄存器
+
 
 ### trap与上下文切换机制
 
@@ -158,5 +126,31 @@ TODO: **重点是上下文切换的逻辑**
 				+ 不过xv6先用`usertrapret`过渡把初始状态处理好后再调用`userret`返回
 - 总结
 	* context相当于进程的**内核态**上下文现场, trapframe相当于进程的 **用户态**上下文现场
+
+
+### debug
+
+1. rcore和xv6的trap逻辑不太兼容
+2. boot栈空间大小问题: 内核栈溢出
+	- 我们的TrapFrame, Context等都不是指针, 启动栈会不太够
+3. 没有补完usertrap等导致scause 5
+	- 下陷后没有切换机器状态, 没有切换epc, 导致sret时到了
+	- 怎么切换: 因为是通过trapframe.epc切换的, 所以要更新trapframe.epc
+4. 没有将程序加载到内存导致scause 2, 没有程序/汗
+	- build.rs细节
+	- build.rs脚本问题, 用户程序被编译成了`xxx.bin`, 而`build.rs`加载的目标没有`.bin`后缀
+5. trapframe.a7等没能保存成功
+	- `userret(trapframe)`, trapframe传递有问题
+6. **rust所有权: 默认move**
+	- 不经意间就**把所有权移走了**
+	- 因为我们os常有`->!`, 所以所有权常常被移动了, 这样一来`p.trapframe`就不是原来的了
+	- 下一次再访问时就物是人非了
+7. **rust怎么返回struct又保留原来所有权**
+	- 像xv6那样的myproc已经不行了
+	- 在swtch这种不会返回rust代码的程序中应小心临时变量
+	- 直接使用`*mut T`
+8. 处理系统调用时epc记得加4, 即跳过`ecall`
+	- `epc`保存的是下陷时刻的pc, 对于系统调用我们是主动调用ecall
+	- 处理完成后`epc+4`跳过ecall, 防止再次触发
 
 

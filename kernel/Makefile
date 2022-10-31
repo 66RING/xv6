@@ -1,5 +1,5 @@
 TARGET := riscv64gc-unknown-none-elf
-MODE := debug
+MODE := release
 ifeq ($(MODE), release)
 	BUILD_MODE = --release
 endif

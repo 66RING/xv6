@@ -6,8 +6,7 @@ use crate::memlayout::*;
 
 // 设置内核stack
 // 也可在.S中设置，.space 4096*8
-// TODO: remove hard code
-//  我们目前需要比较大是boot stack
+// TODO: 我们目前是硬编码比较大的boot stack
 #[no_mangle]
 pub static STACK0: [u8; 4096*100] = [0; 4096*100];
 
@@ -34,7 +33,6 @@ pub unsafe fn start() {
     w_mideleg(0xffff);
     w_sie(r_sie() | SSIE | STIE | SEIE);
 
-    // TODO: 必须
     // configure Physical Memory Protection to give supervisor mode
     // access to all of physical memory.
     w_pmpaddr0(0x3fffffffffffff);
@@ -54,7 +52,6 @@ pub unsafe fn start() {
 }
 
 
-/// TODO: implement
 /// review checkout spec
 fn timerinit() {
     // each CPU has a separate source of timer interrupts.

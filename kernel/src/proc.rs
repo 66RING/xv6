@@ -21,7 +21,7 @@ struct UserStack {
     data: [u8; USER_STACK_SIZE],
 }
 
-// FIXME: 临时, 待虚拟内存后删除硬编码
+// FIXME: 临时, 硬编码进程内核栈空间
 static KERNEL_STACK: [KernelStack; NPROC] = [KernelStack {
     data: [0; KERNEL_STACK_SIZE],
 }; NPROC];
@@ -63,8 +63,7 @@ pub enum ProcState {
 
 #[derive(Clone, Copy)]
 pub struct Proc {
-    // TODO: TrapFrame should be some kind of reference or pointer in case of kernel stack overflow
-    // TODO: wait for kalloc to implement
+    // TODO: TODO: TrapFrame指针, kalloc分配
     // trapframe暂时不用保存
     pub trapframe: TrapFrame, // data page for trampoline.S
     pub context: Context,     // data page for trampoline.S
@@ -130,7 +129,8 @@ impl Context {
 pub struct TrapFrame {
     /*   0 */ pub kernel_satp: usize, // kernel page table
     /*   8 */ pub kernel_sp: usize, // top of process's kernel stack
-    /*  16 */ pub kernel_trap: usize, // usertrap() TODO: 哪里用到了
+    /*  16 */ pub kernel_trap: usize, // usertrap(),
+                                      //uservec根据这里记录的内容跳转handler, 即usertrap
     /*  24 */ pub epc: usize, // saved user program counter
     /*  32 */ pub kernel_hartid: usize, // saved kernel tp
     /*  40 */ pub ra: usize,
@@ -177,9 +177,6 @@ impl TrapFrame {
         self.sp = sp;
     }
     pub fn app_init_context(entry: usize, sp: usize) -> Self {
-        // TODO: xv6中sstatus怎么处理? 和rcore不同
-        // let mut sstatus = sstatus::read();
-        // sstatus.set_spp(SPP::User);
         let mut cx = Self::zero_init();
         cx.epc = entry;
         cx.set_sp(sp);
@@ -221,44 +218,6 @@ pub fn init_app_cx(app_id: usize) -> usize {
     ))
 }
 
-//impl ProcManager {
-//    pub fn new() -> ProcManager {
-//        // 获取总app数
-//        let num_app = get_num_app();
-//        // 创建tcb数组(未初始化)
-//        let mut procs = [Proc {
-//            context: Context::zero_init(),
-//            state: ProcState::UNUSED,
-//            kstack: 0,
-//            trapframe: TrapFrame::zero_init(),
-//            killed: 0,
-//            pid: 0,
-//        }; NPROC];
-//        // 初始化每个任务 -> Ready & cx
-//        //  **为每个任务的内核栈都伪造一个TrapFrame**
-//        //  TrapContext.sp -> **用户栈**
-//        //  TaskContext.sp -> 内核栈
-//        //
-//        //  __swtch切换任务的内核栈, 寄存器上下文
-//        //  __userret切换内核栈到用户栈
-//        for i in 0..num_app {
-//            // TODO:
-//            // procs[i].context = Context::goto_userret(init_app_cx(i));
-//            // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
-//            procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
-//            procs[i].state = ProcState::RUNNABLE;
-//            procs[i].kstack = KERNEL_STACK[i].get_sp();
-//            procs[i].pid = i as i64;
-
-//            // TODO: 整理
-//            procs[i].trapframe.epc = get_base_i(i);
-//            procs[i].trapframe.sp = USER_STACK[i].get_sp();
-//        }
-//        // 返回全局任务管理器实例
-//        ProcManager { procs, curr_id: 0 }
-//    }
-//}
-
 // 我们用户程序的编译脚本中的协议规定了加载地址将0x20000(APP_SIZE_LIMIT)
 // 从而简单计算出加载地址
 fn get_base_i(app_id: usize) -> usize {
@@ -272,9 +231,8 @@ pub fn get_num_app() -> usize {
     unsafe { (_num_app as usize as *const usize).read_volatile() }
 }
 
-/// 运行第一个用户程序
+/// 加载运行第一个用户程序
 pub fn userinit() {
-    // FIXME: 运行第一个程序, 程序退出后触发exit系统调用, 在运行下一个
     let task0 = myproc();
     let next_task_cx_ptr = &task0.context as *const Context;
     // 运行第一个任务前并没有执行任何app，分配一个unused上下文
@@ -295,7 +253,6 @@ fn load_apps() {
 
     let num_app_ptr = _num_app as usize as *const usize;
     let num_app = get_num_app();
-    // TODO : review
     let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
     // load app    // clear i-cache first
     unsafe {
@@ -319,7 +276,6 @@ fn load_apps() {
 
 /// 初始化各个程序, 并为CPU附上初始程序
 pub fn procinit() {
-    // FIXME: just batch system for now
     let mut procs = PROC_POOL.lock();
     let num_app = get_num_app();
     // 初始化每个任务 -> Ready & cx
@@ -330,20 +286,18 @@ pub fn procinit() {
     //  __swtch切换任务的内核栈, 寄存器上下文
     //  __userret切换内核栈到用户栈
     for i in 0..num_app {
-        // TODO:
-        // procs[i].context = Context::goto_userret(init_app_cx(i));
         // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
         procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
         procs[i].state = ProcState::RUNNABLE;
         procs[i].kstack = KERNEL_STACK[i].get_sp();
         procs[i].pid = i as i64;
 
-        // TODO: 整理
+        // 初始化程序第一次启动时trapframe
         procs[i].trapframe.epc = get_base_i(i);
         procs[i].trapframe.sp = USER_STACK[i].get_sp();
     }
 
-    // TODO: 为cpu附上初始程序
+    // 添加到当前CPU上方便后续运行和访问
     let p = &mut procs[0];
     let c = mycpu();
     c.process = p as *mut Proc;
@@ -351,8 +305,6 @@ pub fn procinit() {
 
     load_apps();
     println!("load_app done");
-    // lazy_static, 第一次调用才触发初始化
-    // 初始化进程的内核栈指针
 }
 
 /// 通过CPU di寄存器获取当前cpu
@@ -366,7 +318,7 @@ pub fn myproc() -> &'static mut Proc {
     unsafe { &mut(*c.process) }
 }
 
-/// TODO: 简化版: 调度下一个可运行的程序
+/// TODO: 简化版: 简单调度下一个可运行的程序
 /// 应该的切换到scheduler, 这里直接调度下一个
 pub fn sched() {
     let p = myproc();

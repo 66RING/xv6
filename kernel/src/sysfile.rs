@@ -16,10 +16,7 @@ pub fn argfd(n: isize, pfd: &mut isize, pf: isize) -> isize {
 /// 分别获取用户态的fd, buf, len参数
 /// 返回写入的长度, 小于0出错
 pub fn sys_write() -> isize {
-    // TODO: rust 怎么不初始化
     let mut fd = 0;
-    // TODO: usize as raw pointer
-    // TODO: 怎么优雅
     let mut buf: usize = 0;
     let mut len: isize = 0;
     if argint(2, &mut len) < 0 || argint(0, &mut fd) < 0 {
@@ -30,7 +27,7 @@ pub fn sys_write() -> isize {
     }
     match fd {
         STDOUT => {
-            // TODO: review
+            // 根据裸指针制作一个slice方便处理
             let slice = unsafe {core::slice::from_raw_parts(buf as *const u8, len as usize)};
             // 将传入的缓冲区的开始地址转换成&str
             let str = core::str::from_utf8(slice).unwrap();

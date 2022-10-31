@@ -43,7 +43,6 @@ fn main() {
     kinit();
     allocator_test();
     procinit();      // process table
-    // TODO: user -> kernel的情况
     // trapinit();      // trap vectors
 
     userinit();      // first user process

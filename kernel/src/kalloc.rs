@@ -13,7 +13,6 @@ struct Run {
 }
 
 struct Kmem {
-    // TODO: lock
     freelist: *mut Run,
 }
 

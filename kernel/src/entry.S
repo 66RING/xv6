@@ -1,6 +1,6 @@
 .section .text.entry
 .global _entry
-# TODO: remove hard code
+# boot stack size
 .equ STACK_SIZE, 4096*100
 _entry:
 	# set up a stack for C.

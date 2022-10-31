@@ -15,7 +15,7 @@ pub struct UART {
     spr: RW<u8>,
 }
 
-// TODO lock on
+// TODO: lock on
 impl UART {
     pub fn putc(&mut self, c: char) {
         while (self.lsr.read() & 0x40) == 0 {}
