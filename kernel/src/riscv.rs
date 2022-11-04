@@ -7,7 +7,15 @@ pub const PGSIZE: usize = 4096;
 pub const MAXVA: usize = 1 << (9 + 9 + 9 + 12 - 1);
 pub const PGSHIFT: usize = 12; // bits of offset within a page
 pub const PXMASK: usize = 0x1FF; // 9 bits
+// use riscv's sv39 page table scheme.
 pub const SATP_SV39: usize = 8 << 60;
+pub const ENTRY_NUMS: usize = 512;
+
+pub const PTE_V: usize = 1 << 0; // valid
+pub const PTE_R: usize = 1 << 1;
+pub const PTE_W: usize = 1 << 2;
+pub const PTE_X: usize = 1 << 3;
+pub const PTE_U: usize = 1 << 4; // 1 -> user can access
 
 
 #[macro_export]
@@ -24,7 +32,7 @@ macro_rules! PGROUNDDOWN {
     }
 }
 
-// level 2 1 0 -> 30 21 12
+/// level 2 1 0 -> 30 21 12
 #[macro_export]
 macro_rules! PXSHIFT {
     ( $level:expr) => {
@@ -32,7 +40,8 @@ macro_rules! PXSHIFT {
     }
 }
 
-// extract the three 9-bit page table indices from a virtual address.
+/// extract the three 9-bit page table indices from a virtual address.
+/// 取出不同level的9bit的页表索引号
 #[macro_export]
 macro_rules! PX {
     ( $level:expr, $va:expr) => {
@@ -99,6 +108,13 @@ pub fn w_mstatus(x: usize) {
             "csrw mstatus, {0}",
             in(reg) x,
         );
+    }
+}
+
+#[macro_export]
+macro_rules! MAKE_SATP {
+    ( $pagetable:expr ) => {
+        SATP_SV39 | ($pagetable as *const _ as usize >> 12)
     }
 }
 
@@ -400,7 +416,7 @@ pub fn r_scause() -> usize {
 }
 
 
-// Supervisor Trap Value
+/// Supervisor Trap Value
 #[inline(always)]
 pub fn r_stval() -> usize {
     let mut x: usize;
@@ -419,4 +435,11 @@ pub fn w_mscratch(x: usize) {
         asm!("csrw mscratch, {0}",
              in(reg) x);
     }
+}
+
+
+/// flush the TLB.
+#[inline(always)]
+pub fn sfence_vma() {
+    unsafe { asm!( "sfence.vma zero, zero") };
 }

@@ -12,12 +12,9 @@ SECTIONS
 	_trampoline = .;
     *(trampsec)
     . = ALIGN(0x1000);
-	/* TODO: 这里assert会报错, kill this assert */
-    /* ASSERT(. - _trampoline == 0x1000, "error: trampoline larger than one page"); */
+    ASSERT(. - _trampoline == 0x1000, "error: trampoline larger than one page");
 	PROVIDE(etext = .);
   }
-
-  . = ALIGN(0x1000);
 
   .rodata : {
     . = ALIGN(16);
@@ -28,20 +25,16 @@ SECTIONS
 
   .data : {
     . = ALIGN(16);
-    _sdata = .;
     *(.sdata .sdata.*) /* do not need to distinguish this from .data */
     . = ALIGN(16);
     *(.data .data.*)
-    _edata = .;
   }
 
   .bss : {
     . = ALIGN(16);
-    _sbss = .;
     *(.sbss .sbss.*) /* do not need to distinguish this from .bss */
     . = ALIGN(16);
     *(.bss .bss.*)
-    _ebss = .;
   }
   PROVIDE(_END = .);
 };

@@ -5,8 +5,7 @@ use spin::Mutex;
 use crate::string::*;
 
 // first address after kernel. defined by kernel.ld.
-extern "C" { fn _END();
-}
+extern "C" { fn _END(); }
 
 struct Run {
     next: *mut Run,
@@ -17,9 +16,11 @@ struct Kmem {
 }
 
 static mut KMEM: Mutex<Kmem> = Mutex::new(Kmem{ freelist: ptr::null_mut() });
+static mut PAGE_COUNT: Mutex<isize> = Mutex::new(0);
 
 pub fn kinit() {
     freerange(_END as usize, PHYSTOP);
+    println!("kinit {:#x} .. {:#x}", _END as usize, PHYSTOP);
 }
 
 fn freerange(pa_start: usize, pa_end: usize) {
@@ -46,6 +47,8 @@ fn kfree(pa:usize) {
     memset(pa, 1, PGSIZE);
 
     unsafe {
+        let mut cnt = PAGE_COUNT.lock();
+        *cnt += 1;
         let r = pa as *mut Run;
         // 创建freelsit节点r
         let mut kmem = KMEM.lock();
@@ -60,8 +63,11 @@ pub fn kalloc() -> usize {
         let mut kmem = KMEM.lock();
         let r = kmem.freelist;
         if r.is_null() {
-            panic!("run out of pages");
+            return 0;
         }
+        let mut cnt = PAGE_COUNT.lock();
+        *cnt -= 1;
+
         kmem.freelist = (*r).next;
         // 填充垃圾数据
         memset(r as usize, 5, PGSIZE);
@@ -79,5 +85,10 @@ pub fn allocator_test() {
     assert_eq!(c, b);
     kfree(c);
     kfree(a);
-    unsafe { assert_eq!(KMEM.lock().freelist as usize, PHYSTOP - PGSIZE) };
+    unsafe { 
+        assert_eq!(KMEM.lock().freelist as usize, PHYSTOP - PGSIZE);
+        let cnt = *PAGE_COUNT.lock();
+        assert_eq!(((PHYSTOP - _END as usize)/PGSIZE) as isize, cnt);
+        println!("page count: {}", cnt);
+    }
 }
