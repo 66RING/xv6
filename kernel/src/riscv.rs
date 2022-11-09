@@ -113,8 +113,8 @@ pub fn w_mstatus(x: usize) {
 
 #[macro_export]
 macro_rules! MAKE_SATP {
-    ( $pagetable:expr ) => {
-        SATP_SV39 | ($pagetable as *const _ as usize >> 12)
+    ( $addr:expr ) => {
+        SATP_SV39 | ($addr >> 12)
     }
 }
 

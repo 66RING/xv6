@@ -31,8 +31,8 @@ const SYS_YIELD: usize = 22;
 /// 从trapframe中读取下陷时保存的函数调用参数
 ///     trapframe保存在堆中, 可以通过proc结构访问到
 fn argraw(n: isize) -> usize {
-    let mut p = myproc();
-    let tf = p.trapframe;
+    let p = myproc();
+    let tf = p.trapframe().unwrap();
     match n {
         0 => {
             tf.a0
@@ -77,11 +77,12 @@ pub fn argaddr(n: isize, ip: &mut usize) -> isize {
 pub fn syscall() {
     let mut p = myproc();
     // 获取系统调用号
-    let num  = p.trapframe.a7;
+    let mut trapframe = p.trapframe_mut().unwrap();
+    let num  = trapframe.a7;
     // TODO: 简化版系统调用, 需要更多检查
     match num {
-        SYS_WRITE => p.trapframe.a0 = sys_write() as usize,
-        SYS_EXIT => p.trapframe.a0 = sys_exit() as usize,
+        SYS_WRITE => trapframe.a0 = sys_write() as usize,
+        SYS_EXIT => trapframe.a0 = sys_exit() as usize,
         _ =>  panic!("invalid syscall {}", num),
     }
 }

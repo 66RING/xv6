@@ -1,3 +1,4 @@
+use crate::memlayout::*;
 use crate::riscv::*;
 use crate::syscall::syscall;
 use crate::proc::myproc;
@@ -7,9 +8,10 @@ use spin::Mutex;
 lazy_static! { pub static ref TICKS: Mutex<usize> = unsafe { Mutex::new(0) }; }
 
 extern "C" { 
-    fn userret(trapframe: usize) -> !; 
+    fn userret(trapframe: usize, satp: usize) -> !; 
     fn uservec(trapframe: usize) -> !; 
     fn kernelvec(); 
+    fn trampoline();
 }
 
 pub fn trapinit() {
@@ -38,11 +40,13 @@ pub fn usertrap() -> ! {
     //      trapframe.a0 ~ trapframe.a5分别存储各个参数(见argraw())
     // w_stvec(kernelvec as usize);
     let mut p = myproc();
+    // let mut trapframe = unsafe { &mut **p.trapframe.as_mut().unwrap() };
+    let mut trapframe = p.trapframe_mut().unwrap();
     // save user program counter.
-    p.trapframe.epc = r_sepc();
+    trapframe.epc = r_sepc();
 
     if r_scause() == 8 {
-        p.trapframe.epc += 4;
+        trapframe.epc += 4;
 
         intr_on();
         syscall();
@@ -69,18 +73,20 @@ pub fn usertrapret() -> ! {
     intr_off();
 
     // send syscalls, interrupts, and exceptions to trampoline.S
-    w_stvec(uservec as usize);
+    // userret等位于.global trampoline段, trampoline段映射到TRAMPOLINE中, 通过相对位置访问 
+    w_stvec(TRAMPOLINE + (uservec as usize - trampoline as usize));
 
     let mut p = myproc();
+    // let mut trapframe = unsafe { &mut **p.trapframe.as_mut().unwrap() };
+    let mut trapframe = p.trapframe_mut().unwrap();
     // kstack存入trapframe
     // set up trapframe values that uservec will need when
     // the process next re-enters the kernel.
-    p.trapframe.kernel_sp = p.kstack;
-    // // TODO: 暂不分页
-    // p.trapframe.kernel_satp = r_satp();
-    p.trapframe.kernel_trap = usertrap as usize;
-    p.trapframe.kernel_hartid = r_tp();
-    let trapframe = &p.trapframe as *const _ as usize;
+    trapframe.kernel_sp = p.kstack + PGSIZE;
+    // 保存内核页表
+    trapframe.kernel_satp = r_satp();
+    trapframe.kernel_trap = usertrap as usize;
+    trapframe.kernel_hartid = r_tp();
 
     // set up the registers that trampoline.S's sret will use
     // to get to user space.
@@ -92,11 +98,16 @@ pub fn usertrapret() -> ! {
     w_sstatus(x);
 
     // set S Exception Program Counter to the saved user pc.
-    w_sepc(p.trapframe.epc);
+    w_sepc(trapframe.epc);
 
-    // TODO: 还没开启分页
-    // // tell trampoline.S the user page table to switch to.
-    // uint64 satp = MAKE_SATP(p->pagetable);
+    // tell trampoline.S the user page table to switch to.
+    // TODO: unsafe raw pointer v
+    let satp = MAKE_SATP!(p.pagetable.unwrap() as usize);
 
-    unsafe {userret(trapframe);}
+    // WARN: 不再可以直接函数调用, 需要根据映射的位置(相对trampoline)计算出函数的入口
+    let func_ptr = TRAMPOLINE + (userret as usize - trampoline as usize);
+    let func: extern "C" fn(usize, usize) -> ! = unsafe { core::mem::transmute(func_ptr as usize) };
+    func(TRAPFRAME, satp)
 }
+
+// 用户程序会触发scause 0xc 

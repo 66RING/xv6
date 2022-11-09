@@ -36,7 +36,7 @@ fn freerange(pa_start: usize, pa_end: usize) {
 
 /// 释放页帧/物理地址, 插入freelist头
 /// 毕竟以页为单位, 该物理地址应该是页对齐的
-fn kfree(pa:usize) {
+pub fn kfree(pa:usize) {
     // 如果没有页对齐, 说明不是一个合法页帧
     // 如果pa < end || pa > PHYSTOP说明不再规定的堆空间中
     if pa % PGSIZE != 0 || pa < _END as usize || pa > PHYSTOP {
@@ -63,7 +63,8 @@ pub fn kalloc() -> usize {
         let mut kmem = KMEM.lock();
         let r = kmem.freelist;
         if r.is_null() {
-            return 0;
+            panic!("out of memory");
+            // return 0;
         }
         let mut cnt = PAGE_COUNT.lock();
         *cnt -= 1;

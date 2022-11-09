@@ -65,6 +65,15 @@ macro_rules! debug {
     }
 }
 
+#[macro_export]
+macro_rules! dprintf {
+    ($fmt: literal $(, $($arg: tt)+)?) => {
+        if cfg!(debug_assertions) {
+            $crate::printf::print(format_args!(concat!("\x1b[93m", $fmt, "\x1b[0m") $(, $($arg)+)?));
+        }
+    }
+}
+
 
 // panic depending on error!()
 #[panic_handler]

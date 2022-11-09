@@ -2,12 +2,17 @@
 #![allow(unused)]
 
 use crate::param::*;
+use crate::string::*;
 use crate::trap::usertrapret;
+use crate::vm::PageTable;
 use core::arch::asm;
 use core::cell::{RefCell, RefMut};
 use lazy_static::lazy_static;
 use spin::Mutex;
 use crate::riscv::*;
+use crate::memlayout::*;
+use crate::kalloc::*;
+use crate::vm::*;
 
 #[repr(align(4096))]
 #[derive(Copy, Clone)]
@@ -51,7 +56,7 @@ impl UserStack {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ProcState {
     UNUSED,
     USED,
@@ -61,34 +66,52 @@ pub enum ProcState {
     ZOMBIE,
 }
 
-#[derive(Clone, Copy)]
+impl Default for ProcState {
+    fn default() -> Self {
+        ProcState::UNUSED
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 pub struct Proc {
     // TODO: TODO: TrapFrame指针, kalloc分配
     // trapframe暂时不用保存
-    pub trapframe: TrapFrame, // data page for trampoline.S
+    pub trapframe: Option<*mut TrapFrame>, // data page for trampoline.S
     pub context: Context,     // data page for trampoline.S
     pub state: ProcState,     // Process state
-    pub kstack: usize,
+    pub kstack: usize,        // TODO: kernel stack page number
+    pub pagetable: Option<*mut PageTable>,
 
     pub killed: i64,
     pub pid: i64,
+    pub sz: usize,
 }
+
+// TODO: 线程安全
+unsafe impl Send for Proc {}
 
 impl Proc {
     pub fn zero_init() -> Self {
         Proc {
             context: Context::zero_init(),
-            state: ProcState::RUNNABLE,
+            state: ProcState::UNUSED,
             kstack: 0,
-            trapframe: TrapFrame::zero_init(),
+            trapframe: None,
             killed: 0,
-            pid: 0,
+            ..Default::default()
         }
+    }
+
+    pub fn trapframe(&self) -> Option<&'static TrapFrame> {
+        unsafe { Some(&*self.trapframe.unwrap()) }
+    }
+    pub fn trapframe_mut(&mut self) -> Option<&'static mut TrapFrame> {
+        unsafe { Some(&mut *self.trapframe.unwrap()) }
     }
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy, Default, Debug)]
 pub struct Context {
     ra: usize,
     sp: usize,
@@ -177,10 +200,10 @@ impl TrapFrame {
         self.sp = sp;
     }
     pub fn app_init_context(entry: usize, sp: usize) -> Self {
-        let mut cx = Self::zero_init();
-        cx.epc = entry;
-        cx.set_sp(sp);
-        cx
+        let mut tf = Self::zero_init();
+        tf.epc = entry;
+        tf.set_sp(sp);
+        tf
     }
 }
 
@@ -232,7 +255,76 @@ pub fn get_num_app() -> usize {
 }
 
 /// 加载运行第一个用户程序
+/// 制作进程用户态地址空间
 pub fn userinit() {
+
+    extern "C" { fn _num_app(); }
+
+    // 获取app数
+    let num_app = get_num_app();
+    // 协议规定第一的usize是数量, 后续是各个app的起始地址
+    let num_app_ptr = _num_app as usize as *const usize;
+    // 将app起始地址创建成数组
+    let app_start = unsafe { core::slice::from_raw_parts(num_app_ptr.add(1), num_app + 1) };
+    // load app    // clear i-cache first
+    unsafe {
+        asm!("fence.i");
+    }
+
+    // TODO: 这里一次性加载所有, 应该仅加载init程序, 待exec实现
+    // TODO: 和myload_app大量重复
+    for i in 0..num_app {
+        unsafe {
+            // 获取PCB中一个可用进程位
+            let mut p = allocproc();
+            let p = &mut *p;
+            let size = app_start[i+1] - app_start[i];
+            assert!(p.pagetable.is_some());
+            let pgtbl = &mut *(*p).pagetable.unwrap();
+            // uvminit(pgtbl, app_start[i], size);
+            p.sz = size;
+            // TODO: 丑
+            p.trapframe_mut().unwrap().epc = 0; // 代码从va 0开始
+
+            // 边界申请两页作为用户栈, 第一页做guard, 第二页才是用户栈
+            // Allocate two pages at the next page boundary.
+            // Use the second as the user stack.
+            let sz = PGROUNDUP!(size);
+            // 申请用户栈
+            let newsz = uvmalloc(pgtbl, sz, sz + 2*PGSIZE);
+            if newsz == 0 {
+                unimplemented!();
+            }
+            uvmclear(pgtbl, newsz-2*PGSIZE);
+            // ERROR: BUG!!!!!!!!!!!!!!!!!!1
+            // let sp = newsz - PGSIZE;
+            let sp = newsz;
+
+            // 设置用户栈, "代码段"之后
+            p.trapframe_mut().unwrap().sp = sp;
+            p.state = ProcState::RUNNABLE;
+        }
+    }
+
+
+
+    // allocate one user page and copy init's instructions
+    // and data into it.
+    // uvminit(p.pagetable, initcode, sizeof(initcode));
+    // p->sz = PGSIZE;
+    // 
+    // // prepare for the very first "return" from kernel to user.
+    // p->trapframe->epc = 0;      // user program counter
+    // p->trapframe->sp = PGSIZE;  // user stack pointer
+    // 
+    // safestrcpy(p->name, "initcode", sizeof(p->name));
+    // p->cwd = namei("/");
+    // 
+    // p->state = RUNNABLE;
+
+
+
+
     let task0 = myproc();
     let next_task_cx_ptr = &task0.context as *const Context;
     // 运行第一个任务前并没有执行任何app，分配一个unused上下文
@@ -242,6 +334,42 @@ pub fn userinit() {
         swtch(&mut _unused as *mut Context, next_task_cx_ptr);
     }
     panic!("unreachable in run_first_task!");
+}
+
+/// 返回一个UNUSED的proc
+///  如果找到则初始化它的状态
+///  初始化pid, state, trapframe, context
+fn allocproc() -> *mut Proc {
+    let mut p: &mut Proc;
+    let mut procs = PROC_POOL.lock();
+    for i in 0..NPROC {
+        if procs[i].state == ProcState::UNUSED {
+            p = &mut procs[i];
+
+            // 初始化进程状态
+            p.state = ProcState::USED;
+            // 分配pid
+            p.pid = i as i64;
+            // 分配trapframe
+            // TODO: 暂时不用分配
+            // p.trapframe = Some(*kalloc() as *const TrapFrame);
+            // 分配pagetable
+            // p.pagetable = proc_pagetable(p);
+            // 初始化context
+            // TODO: 不在这
+            // memset(&p.context as *const _ as usize, 0, core::mem::size_of::<Context>());
+
+            // TODO: review
+            // p.context.ra = get_base_i(i);
+            // 内核栈设置
+            p.context.sp = p.kstack + PGSIZE;
+
+            return p;
+        }
+    }
+
+    // 如果没找到可用的proc slot, 直接诶panic
+    panic!("run out of proc");
 }
 
 /// TODO: 重新抽象
@@ -258,23 +386,26 @@ fn load_apps() {
     unsafe {
         asm!("fence.i");
     }
+    let mut procs = PROC_POOL.lock();
     // load apps
     for i in 0..num_app {
-        let base_i = get_base_i(i);
-        // clear region
-        (base_i..base_i + APP_SIZE_LIMIT)
-            .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
-        // load app from data section to memory
-        let src = unsafe {
-            core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i])
-        };
-        // 第i个app加载的base_i
-        let dst = unsafe { core::slice::from_raw_parts_mut(base_i as *mut u8, src.len()) };
-        dst.copy_from_slice(src);
+        // let base_i = get_base_i(i);
+        // // clear region
+        // (base_i..base_i + APP_SIZE_LIMIT)
+        //     .for_each(|addr| unsafe { (addr as *mut u8).write_volatile(0) });
+        // // load app from data section to memory
+        // let src = unsafe {
+        //     core::slice::from_raw_parts(app_start[i] as *const u8, app_start[i + 1] - app_start[i])
+        // };
+        // // 第i个app加载的base_i
+        // let dst = unsafe { core::slice::from_raw_parts_mut(base_i as *mut u8, src.len()) };
+        // dst.copy_from_slice(src);
+
+        myload_app(&mut procs[i], app_start[i], app_start[i+1] - app_start[i]);
     }
 }
 
-/// 初始化各个程序, 并为CPU附上初始程序
+/// 初始化各个程序, 并为CPU附上初始程序 TODO: recomment
 pub fn procinit() {
     let mut procs = PROC_POOL.lock();
     let num_app = get_num_app();
@@ -287,24 +418,67 @@ pub fn procinit() {
     //  __userret切换内核栈到用户栈
     for i in 0..num_app {
         // 因为xv6中trapframe不是保存在栈中, 所以直接给内核栈指针
-        procs[i].context = Context::goto_usertrapret(KERNEL_STACK[i].get_sp());
-        procs[i].state = ProcState::RUNNABLE;
-        procs[i].kstack = KERNEL_STACK[i].get_sp();
+        // TODO: dulplicated
+        // procs[i].context = Context::goto_usertrapret(PGSIZE + KSTACK!(&procs[i] as *const _ as usize - &*procs as *const _ as usize));
+        procs[i].context.ra = usertrapret as usize;
+        procs[i].state = ProcState::UNUSED;
+        // TODO: 使用PCB中的索引计算出进程内核栈 **页帧**, kstack + PGSIZE才得到内核栈起始地址
+        procs[i].kstack = KSTACK!(&procs[i] as *const _ as usize - &*procs as *const _ as usize);
         procs[i].pid = i as i64;
+        // TODO: 暂时在这, 应该是在allocproc的
+        let tf = kalloc();
+        memset(tf, 0, PGSIZE);
+        procs[i].trapframe = Some(unsafe {tf as *mut TrapFrame});
 
         // 初始化程序第一次启动时trapframe
-        procs[i].trapframe.epc = get_base_i(i);
-        procs[i].trapframe.sp = USER_STACK[i].get_sp();
+        // 程序将拷贝到va 0处
+        // 后续初始化时再申请栈空间
+            // procs[i].trapframe.epc = get_base_i(i);
+            // procs[i].trapframe.sp = USER_STACK[i].get_sp();
     }
 
     // 添加到当前CPU上方便后续运行和访问
     let p = &mut procs[0];
     let c = mycpu();
     c.process = p as *mut Proc;
-    p.state = ProcState::RUNNING;
+    p.state = ProcState::UNUSED;
+    // TODO: 这里手动drop, 有没有更好的设计
+    drop(procs);
 
     load_apps();
     println!("load_app done");
+}
+
+fn myload_app(p: &mut Proc, src: usize, sz: usize) {
+    // 创建进程页表: 映射trampoline和trapframe
+    if let Some(pagetable) = proc_pagetable(p) {
+        // 申请用户态地址空间, 标记为W | R | U
+        p.pagetable = Some(pagetable);
+        let pagetable = unsafe {&mut *pagetable};
+        let newsz = uvmalloc(pagetable, 0, sz);
+
+        // TODO: loadseg
+        // 读取程序信息, 从0填充va
+        for a in (0..sz).step_by(PGSIZE) {
+            if let Some(pa) = pagetable.walkaddr(a) {
+
+                // 去读数据载入pa
+                // 不足一页时不载一页
+                let n = if sz - a < PGSIZE {
+                    sz - a
+                } else {
+                    PGSIZE
+                };
+                memmove(pa, src + a, n);
+            } else {
+                panic!("va not exist");
+            }
+        }
+    } else {
+        panic!("fail to load");
+    }
+
+    // unimplemented!()
 }
 
 /// 通过CPU di寄存器获取当前cpu
@@ -343,3 +517,57 @@ pub fn sched() {
     unreachable!();
 }
 
+/// 为进程映射内核栈空间
+/// 根据在PROC_POOL中的索引计算出各个进程栈空间的虚拟地址
+/// 然后各申请一页作为内核栈
+pub fn proc_mapstacks(kpgtbl :&mut PageTable) {
+    let num_app = get_num_app();
+    let mut procs = PROC_POOL.lock();
+    for i in 0..num_app {
+        // 通过index计算出进程的内核栈空间, 做个栈空间随机化
+        // TODO: 重新设计计算方法
+        let va = KSTACK!(&procs[i] as *const _ as usize - &*procs as *const _ as usize);
+        // 为内核栈分配一页空间
+        let new_page_pa = kalloc();
+        memset(new_page_pa, 0, PGSIZE);
+        unsafe {
+            // TODO: kill this unsafe
+            kvmmap(kpgtbl, va, new_page_pa, PGSIZE, PTE_R | PTE_W);
+        }
+    }
+}
+
+/// 创建进程页表
+///     映射trampoline
+///     通过p.trapframe映射trapframe
+/// FIXME:: ruxt怎么传递指针呢
+/// TODO: 传引用
+pub fn proc_pagetable(p: &mut Proc) -> Option<*mut PageTable> {
+    let mut pgtbl = uvmcreate();
+    extern "C" {
+        fn trampoline();
+    }
+
+    // TODO:
+    // 映射trampoline跳板空间
+    // map the trampoline code (for system call return)
+    // at the highest user virtual address.
+    // only the supervisor uses it, on the way
+    // to/from user space, so not PTE_U.
+    // TODO: 看注释，为何不需要PTE_U
+    if mappages(pgtbl, TRAMPOLINE, trampoline as usize, PGSIZE, PTE_X | PTE_R) < 0 {
+        uvmfree(pgtbl, 0);
+        return None;
+    }
+
+    // 映射trapframe, trapframe映射到trampoline正下方
+    // 因为上下文切换需要访问trapframe, 而当页表切换后不再可以直接&取址了
+    // 需要通过trampoline计算出相对位置
+    if mappages(pgtbl, TRAPFRAME, p.trapframe.unwrap() as *const _ as usize, PGSIZE, PTE_R | PTE_W) < 0 {
+        uvmunmap(pgtbl, TRAMPOLINE, 1, false);
+        uvmfree(pgtbl, 0);
+        return None;
+    }
+
+    Some(pgtbl)
+}

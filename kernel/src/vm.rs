@@ -119,6 +119,24 @@ impl PageTable {
         // 最后返回最后一级索引的结果, 即物理页
         Some(&mut pagatable.entries[PX!(0, va)])
     }
+
+    /// 仅用于查表
+    /// va查表, 返回物理地址或返回0出错
+    pub fn walkaddr(&mut self, va: usize) -> Option<usize> {
+        if va > MAXVA {
+            panic!("bad va");
+        }
+        if let Some(pte) = self.walk(va, false) {
+            // 地址未分配
+            if pte.data & PTE_V == 0 || pte.data & PTE_U == 0 {
+                panic!("[debug] walkaddr");
+                return None;
+            }
+            Some(PTE2PA!(pte.data))
+        } else {
+            None
+        }
+    }
 }
 
 /// 初始化内核页表
@@ -130,7 +148,7 @@ pub fn kvminit() {
 
 /// 设置内核页表且启动分页
 pub fn kvminithart() {
-    unsafe { w_satp(MAKE_SATP!(&KERNEL_PAGETABLE)) };
+    unsafe { w_satp(MAKE_SATP!(&KERNEL_PAGETABLE as *const _ as usize)) };
     sfence_vma();
 }
 
@@ -146,7 +164,7 @@ pub fn kvmmap(kpgtbl: &mut PageTable, va: usize, pa: usize, sz: usize, perm: usi
 /// TODO:
 /// 将[va..va+sz]映射到[pa..pa+sz]
 ///     walk(tbl), 填写pte
-fn mappages(kpgtbl: &mut PageTable, va: usize, pa: usize, size: usize, perm: usize) -> i32 {
+pub fn mappages(pagetable: &mut PageTable, va: usize, pa: usize, size: usize, perm: usize) -> i32 {
     if size == 0 {
         panic!("mappages: size");
     }
@@ -155,7 +173,7 @@ fn mappages(kpgtbl: &mut PageTable, va: usize, pa: usize, size: usize, perm: usi
     let mut va_start = PGROUNDDOWN!(va);
     let va_end = PGROUNDDOWN!(va + size - 1);
     loop {
-        if let Some(pte) = kpgtbl.walk(va_start, true) {
+        if let Some(pte) = pagetable.walk(va_start, true) {
             if (*pte).data & PTE_V != 0 {
                 panic!("mappages: remap");
             }
@@ -172,8 +190,76 @@ fn mappages(kpgtbl: &mut PageTable, va: usize, pa: usize, size: usize, perm: usi
     0
 }
 
+/// TODO: 仅加载initcode, 但这里还只是简单实现
 /// 用户态虚拟内存初始化
+/// 从src拷贝(因为src不可执行)到分配的物理页中, 然后从0开始创建虚拟内存
+///     即, 代码拷贝到虚拟地址0处
 pub fn uvminit(pgtbl: &mut PageTable, src: usize, sz: usize) {
+    // 申请物理页
+    let mem = kalloc();
+    memset(mem, 0, PGSIZE);
+    // 将物理页添加到页表完成映射
+    // 从va 0开始映射, 标记为用户态可访问
+    mappages(pgtbl, 0, mem, PGSIZE, PTE_R | PTE_W | PTE_X | PTE_U);
+    // 将数据拷贝入物理页中
+    memmove(mem, src, sz);
+}
 
+/// 扩展/收缩进程的地址空间: 从oldsz到newsz, 需要页对齐
+/// 返回新地址空间或出错返回0
+pub fn uvmalloc(pgtbl: &mut PageTable, oldsz: usize, newsz: usize) -> usize {
+    if newsz < oldsz {
+        return oldsz;
+    }
+    // 申请物理页, 覆盖oldsz .. newsz的虚拟地址空间
+    let va_start = PGROUNDUP!(oldsz);
+    for a in (va_start..newsz).step_by(PGSIZE) {
+        let mem = kalloc();
+        if mem == 0 {
+            uvmdealloc(pgtbl, oldsz, newsz);
+            return 0;
+        }
+        memset(mem, 0, PGSIZE);
+
+        if mappages(pgtbl, a, mem, PGSIZE, PTE_R | PTE_W | PTE_X | PTE_U) < 0 {
+            kfree(mem);
+            uvmdealloc(pgtbl, oldsz, newsz);
+            return 0;
+        }
+    }
+
+    newsz
+}
+
+pub fn uvmdealloc(pgtbl: &mut PageTable, oldsz: usize, newsz: usize) -> usize {
     unimplemented!()
+}
+
+/// 将地址空间标记为用户态不可用的
+/// exec中创建stack guard page
+pub fn uvmclear(pgtbl: &mut PageTable, va: usize) {
+    if let Some(pte) = pgtbl.walk(va, false) {
+        pte.data &= !PTE_U;
+    } else {
+        panic!("uvmclear");
+    }
+}
+
+/// 从0释放用户态地址空间
+/// 将0..sz的地址空间取消映射
+/// TODO:
+pub fn uvmfree(pgtbl: &mut PageTable, sz: usize) {
+    unimplemented!()
+}
+
+/// TODO:
+pub fn uvmunmap(pgtbl: &mut PageTable, va: usize, npages: usize, do_free: bool) {
+    unimplemented!()
+}
+
+/// 申请一物理页作为一级页表
+pub fn uvmcreate() -> &'static mut PageTable {
+    let p = kalloc();
+    memset(p, 0, PGSIZE);
+    unsafe {&mut *(p as *mut PageTable)}
 }

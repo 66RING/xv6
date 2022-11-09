@@ -20,6 +20,7 @@ mod sysproc;
 mod kalloc;
 mod string;
 mod vm;
+mod exec;
 
 use core::arch::global_asm;
 use crate::kalloc::{kinit, allocator_test};
@@ -42,6 +43,7 @@ fn main() {
     info!(" >  <  \\ V /| (_) |_____| |  \\__ \\\n");
     debug!("/_/\\_\\  \\_/  \\___/      |_|  |___/\n");
     error!("May chaos take the world!\n");
+    dprintf!("[DEBUG ON]");
 
     kinit();
     allocator_test();
