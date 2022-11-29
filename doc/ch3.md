@@ -13,8 +13,6 @@
 - trampoline机制
     * trampoline映射到物理内存最高处(某一协定的指定地址), 该映射位置在用户态和内核态是相同的
     * 之所以需要trampoline是因为需要同时切换以下三个空间: 页表, 栈, pc。用户态和内核态映射相同位置的策略就可以完成pc和页表的同时切换
-- TODO: 线程安全
-    * TODO: 实现spinlock
 
 开启虚存后的, 注意以下几点
 
@@ -33,6 +31,33 @@
     * 用户程序代码段之后的`2xPGSIZE`的空间作为用户栈
     * 用户栈之后就是用户线性增长的heap空间
     * [the xv6 book: Figure 2.3: Layout of a process’s virtual address space](https://pdos.csail.mit.edu/6.S081/2020/xv6/book-riscv-rev1.pdf)
+
+
+### Spinlock
+
+- 上锁
+    * `push_off`关闭中断
+    * 预防重复上锁导致的死锁: 上锁前检测是否持有锁, 应该是不持有锁的
+    * 使用原子CAS指令完成上锁标记, 如果失败则spin: `while`
+        + `AtomicBool:compare_exchange()`
+    * spin后添加"内存屏障", 防止cpu预取导致spectre漏洞
+    * 最后记录cpuid(hartid), 用于判断当前cpu是否持有锁
+- 解锁
+    * cpuid置无效
+    * "内存屏障"防spectre
+    * 原子操作将锁标记清除
+    * `pop_off`恢复中断
+- `push_off`/`pop_off`
+    * push/pop用于记录锁调用栈的深度, 因为上锁过程需要关闭中断, 并且期间我们可能会申请多种类型的锁"多次关中断", 但是在释放过程中我们希望是最后一个锁释放后才恢复中断, 否则将会导致持有锁的过程中中断发送
+    * 实现就是调用深度`noff ++--`, 当`noff`为0时才开关中断
+- `holding`判断是否持有锁
+    * 即判断当前cpu是否是持有锁的cpu, 并且判断锁标记是否上锁`locked`
+- rust式锁
+    * cpp和rust都有锁(MutexGuard)自动释放功能, 实现方法就是离开作用域析构时自动解锁
+    * rust中我们使用一个wrapper结构体`MutexGuard`
+        + 申请锁时自动加锁并返回该结构体
+        + 为该结构体实现deref, 自动对内部数据解引用, 因此与普通引用用法相同
+        + 为该结构体实现drop, 在其生命周期结束时自动释放锁
 
 
 ### 栈空间

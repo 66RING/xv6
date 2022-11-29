@@ -21,6 +21,7 @@ mod kalloc;
 mod string;
 mod vm;
 mod exec;
+mod spinlock;
 
 use core::arch::global_asm;
 use crate::kalloc::{kinit, allocator_test};
